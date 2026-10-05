@@ -4,11 +4,20 @@ import path from "path";
 import { z } from "zod";
 
 /**
- * Server-only configuration. Wiring (paths, URLs, models) comes from .env, brand
- * knowledge from one context file (Markdown with YAML frontmatter, see
- * examples/content-context.example.md). Both are validated with zod and cached until
- * .env values or the context file change.
+ * Server-only configuration. .env holds paths and keys (CONTENT_DIR, optional
+ * CONTEXT_FILE); the site itself (name, url, brand) is described in one context file
+ * (Markdown with YAML frontmatter, see examples/content-context.example.md), found at:
+ *
+ * 1. CONTEXT_FILE, if set
+ * 2. the nearest content-context.md in CONTENT_DIR or any folder above it
+ * 3. ./content-context.md in this folder
+ *
+ * The ideas list is stored next to the context file. Both are validated with zod
+ * and cached until .env values or the context file change.
  */
+
+export const CONTEXT_FILENAME = "content-context.md";
+export const IDEAS_FILENAME = "content-ideas.json";
 
 const text = z.string().trim().min(1);
 const textList = z.array(text).default([]);
@@ -30,7 +39,12 @@ export type FrontmatterField = (typeof FRONTMATTER_FIELDS)[number];
 
 const contextSchema = z
   .object({
-    name: text.optional(),
+    name: text,
+    url: text.pipe(
+      z.string().url("must be a full URL like https://example.com"),
+    ),
+    // URL path posts are served under; defaults to "/" + the CONTENT_DIR folder name.
+    blogPath: z.string().trim().optional(),
     tagline: text.optional(),
     industry: text,
     summary: text,
@@ -62,9 +76,7 @@ const contextSchema = z
       .strict()
       .default({}),
     links: z
-      .array(
-        z.object({ url: text, anchor: text, triggers: textList }).strict(),
-      )
+      .array(z.object({ url: text, anchor: text, triggers: textList }).strict())
       .default([]),
     cta: text.optional(),
     categories: z
@@ -78,6 +90,7 @@ const contextSchema = z
     defaultCategory: text.optional(),
     tags: textList,
     acronyms: textList,
+    allowedWords: textList,
     competitors: textList,
     avoidTopics: textList,
     planning: textList,
@@ -108,36 +121,9 @@ const contextSchema = z
   })
   .strict();
 
-// .env values; empty strings count as missing.
-const optionalEnv = z.preprocess(
-  (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
-  z.string().trim().optional(),
-);
-const requiredEnv = (name: string, hint: string) =>
-  z.preprocess(
-    (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
-    z.string({ required_error: `${name} is not set. ${hint}` }).trim(),
-  );
+const envValue = (name: string) => process.env[name]?.trim() || undefined;
 
-const envSchema = z.object({
-  CONTENT_CONTEXT_FILE: requiredEnv(
-    "CONTENT_CONTEXT_FILE",
-    "Point it at your brand context file.",
-  ),
-  SITE_NAME: requiredEnv("SITE_NAME", "Use your site's display name."),
-  SITE_URL: requiredEnv("SITE_URL", "Use the site's public URL.").pipe(
-    z.string().url("SITE_URL must be a full URL like https://example.com"),
-  ),
-  BLOG_PATH: optionalEnv,
-  CONTENT_OUTPUT_DIR: requiredEnv(
-    "CONTENT_OUTPUT_DIR",
-    "Use the folder your site reads blog posts from.",
-  ),
-  CALENDAR_FILE: optionalEnv,
-});
-
-export type BrandContext = Omit<z.infer<typeof contextSchema>, "name"> & {
-  name: string;
+export type BrandContext = Omit<z.infer<typeof contextSchema>, "url"> & {
   /** Markdown body of the context file: free-form brand and fact guidance. */
   guide: string;
 };
@@ -150,8 +136,9 @@ export interface SiteConfig {
   host: string;
   /** Leading slash, no trailing slash; "" when posts live at the site root */
   blogPath: string;
-  outputDir: string;
-  calendarFile: string;
+  /** Folder posts are read from and saved to */
+  contentDir: string;
+  ideasFile: string;
   contextFile: string;
 }
 
@@ -160,9 +147,23 @@ export interface StudioConfig {
   brand: BrandContext;
 }
 
+/** What the setup screen needs to show the next step. */
+export interface SetupProblem {
+  /** 1: CONTENT_DIR is missing or wrong. 2: the context file is missing or invalid. */
+  step: 1 | 2;
+  errors: string[];
+  contentDir?: string;
+  /** The context file in use, or where to create one (the site's repo root). */
+  contextFile?: string;
+  /** True when the context file exists but has errors. */
+  contextExists?: boolean;
+  /** True when nothing is configured yet: not a mistake to report. */
+  firstRun?: boolean;
+}
+
 export type StudioConfigResult =
   | ({ ok: true } & StudioConfig)
-  | { ok: false; errors: string[] };
+  | ({ ok: false } & SetupProblem);
 
 export class SetupError extends Error {
   errors: string[];
@@ -175,34 +176,87 @@ export class SetupError extends Error {
 
 const resolvePath = (p: string) => path.resolve(process.cwd(), p);
 
-function normalizeBlogPath(p: string | undefined): string {
-  const trimmed = (p ?? "/blog").trim().replace(/^\/+|\/+$/g, "");
+function normalizeBlogPath(p: string): string {
+  const trimmed = p.trim().replace(/^\/+|\/+$/g, "");
   return trimmed ? `/${trimmed}` : "";
 }
 
 function formatIssues(prefix: string, error: z.ZodError): string[] {
   return error.issues.map((issue) => {
     const where = issue.path.join(".");
+    if (where && issue.message === "Required")
+      return `${prefix}${where} is missing`;
     return `${prefix}${where ? `${where}: ` : ""}${issue.message}`;
   });
 }
 
-let cache: { key: string; result: StudioConfigResult } | null = null;
+function findContextFile(contentDir: string): string | null {
+  const explicit = envValue("CONTEXT_FILE");
+  if (explicit) return resolvePath(explicit);
+  for (let dir = contentDir; ; dir = path.dirname(dir)) {
+    const candidate = path.join(dir, CONTEXT_FILENAME);
+    if (fs.existsSync(candidate)) return candidate;
+    if (path.dirname(dir) === dir) break;
+  }
+  const local = resolvePath(CONTEXT_FILENAME);
+  return fs.existsSync(local) ? local : null;
+}
 
-function load(): StudioConfigResult {
-  const env = envSchema.safeParse(process.env);
-  if (!env.success) return { ok: false, errors: formatIssues("", env.error) };
+// The site's repo root: the nearest folder above CONTENT_DIR with .git or package.json.
+function guessRepoRoot(contentDir: string): string {
+  for (
+    let dir = contentDir;
+    path.dirname(dir) !== dir;
+    dir = path.dirname(dir)
+  ) {
+    if (["package.json", ".git"].some((f) => fs.existsSync(path.join(dir, f))))
+      return dir;
+  }
+  return contentDir;
+}
 
-  const contextFile = resolvePath(env.data.CONTENT_CONTEXT_FILE);
-  if (!fs.existsSync(contextFile)) {
+/** CONTENT_DIR and the context file it leads to, or what's missing. */
+function locate(): { contentDir: string; contextFile: string } | SetupProblem {
+  const dir = envValue("CONTENT_DIR");
+  if (!dir) {
     return {
-      ok: false,
+      step: 1,
+      firstRun: !envValue("CONTENT_OUTPUT_DIR"),
       errors: [
-        `The context file ${contextFile} doesn't exist. Set CONTENT_CONTEXT_FILE in .env (start from examples/content-context.example.md).`,
+        envValue("CONTENT_OUTPUT_DIR")
+          ? "CONTENT_OUTPUT_DIR was renamed to CONTENT_DIR. Rename it in .env (BLOG_PATH, CALENDAR_FILE, SITE_NAME and SITE_URL are no longer used: the site's name and url go in the context file)."
+          : "CONTENT_DIR is not set in .env.",
       ],
     };
   }
+  const contentDir = resolvePath(dir);
+  if (!fs.existsSync(contentDir) || !fs.statSync(contentDir).isDirectory()) {
+    return {
+      step: 1,
+      errors: [`CONTENT_DIR points to ${contentDir}, which isn't a folder.`],
+    };
+  }
 
+  const contextFile = findContextFile(contentDir);
+  if (!contextFile || !fs.existsSync(contextFile)) {
+    return {
+      step: 2,
+      contentDir,
+      contextFile:
+        contextFile ?? path.join(guessRepoRoot(contentDir), CONTEXT_FILENAME),
+      errors: [
+        contextFile
+          ? `CONTEXT_FILE ${contextFile} doesn't exist.`
+          : `No ${CONTEXT_FILENAME} found in ${contentDir} or the folders above it.`,
+      ],
+    };
+  }
+  return { contentDir, contextFile };
+}
+
+let cache: { key: string; result: StudioConfigResult } | null = null;
+
+function load(contentDir: string, contextFile: string): StudioConfigResult {
   let parsed: matter.GrayMatterFile<string>;
   try {
     // Fresh object each time: gray-matter caches by content otherwise.
@@ -210,8 +264,12 @@ function load(): StudioConfigResult {
   } catch (err: any) {
     return {
       ok: false,
+      step: 2,
+      contentDir,
+      contextFile,
+      contextExists: true,
       errors: [
-        `Couldn't read the frontmatter in ${contextFile}: ${err?.message || err}`,
+        `The YAML at the top of the file couldn't be read: ${err?.message || err}`,
       ],
     };
   }
@@ -220,46 +278,46 @@ function load(): StudioConfigResult {
   if (!context.success) {
     return {
       ok: false,
-      errors: formatIssues(`${path.basename(contextFile)} → `, context.error),
+      step: 2,
+      contentDir,
+      contextFile,
+      contextExists: true,
+      errors: formatIssues("", context.error),
     };
   }
 
-  const url = env.data.SITE_URL.replace(/\/+$/, "");
+  const { url: rawUrl, ...brand } = context.data;
+  const url = rawUrl.replace(/\/+$/, "");
   const site: SiteConfig = {
-    name: env.data.SITE_NAME,
+    name: brand.name,
     url,
     host: new URL(url).host,
-    blogPath: normalizeBlogPath(env.data.BLOG_PATH),
-    outputDir: resolvePath(env.data.CONTENT_OUTPUT_DIR),
-    calendarFile: resolvePath(
-      env.data.CALENDAR_FILE || "./data/content-calendar.json",
+    blogPath: normalizeBlogPath(
+      context.data.blogPath ?? path.basename(contentDir),
     ),
+    contentDir,
+    ideasFile: path.join(path.dirname(contextFile), IDEAS_FILENAME),
     contextFile,
   };
 
   return {
     ok: true,
     site,
-    brand: {
-      ...context.data,
-      name: context.data.name || site.name,
-      guide: parsed.content.trim(),
-    },
+    brand: { ...brand, guide: parsed.content.trim() },
   };
 }
 
 /** Loads and validates .env + the context file. Never throws. */
 export function getStudioConfig(): StudioConfigResult {
-  const envKeys = Object.keys(envSchema.shape) as (keyof typeof envSchema.shape)[];
-  const contextPath = process.env.CONTENT_CONTEXT_FILE?.trim();
-  let mtime = 0;
-  try {
-    if (contextPath) mtime = fs.statSync(resolvePath(contextPath)).mtimeMs;
-  } catch {
-    // Missing file: load() reports it.
-  }
-  const key = [...envKeys.map((k) => process.env[k] ?? ""), mtime].join("|");
-  if (cache?.key !== key) cache = { key, result: load() };
+  const located = locate();
+  if ("step" in located) return { ok: false, ...located };
+
+  const { contentDir, contextFile } = located;
+  const key = [contentDir, contextFile, fs.statSync(contextFile).mtimeMs].join(
+    "|",
+  );
+  if (cache?.key !== key)
+    cache = { key, result: load(contentDir, contextFile) };
   return cache.result;
 }
 

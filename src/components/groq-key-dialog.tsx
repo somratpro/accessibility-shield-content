@@ -57,7 +57,7 @@ export function GroqKeyDialog({ open, onOpenChange, onKeySaved, usingEnvKey }: G
     <Dialog open={open} onOpenChange={onOpenChange} title="Groq API key">
       <div className="space-y-3">
         {usingEnvKey && (
-          <p className="text-sm text-muted">
+          <p className="text-sm text-muted-foreground">
             A key is already set in <code>.env</code>. A key saved here overrides it in this browser.
           </p>
         )}
@@ -72,13 +72,13 @@ export function GroqKeyDialog({ open, onOpenChange, onKeySaved, usingEnvKey }: G
           onChange={(e) => setApiKey(e.target.value)}
           className="font-mono"
         />
-        <p className="text-xs text-muted">
+        <p className="text-xs text-muted-foreground">
           Stored in this browser only.{" "}
           <a
             href="https://console.groq.com/keys"
             target="_blank"
             rel="noreferrer"
-            className="underline underline-offset-2 hover:text-fg"
+            className="underline underline-offset-2 hover:text-foreground"
           >
             Get a free key
           </a>

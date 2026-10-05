@@ -18,8 +18,8 @@ export interface PipelineOptions {
   customInstruction?: string;
   apiKey?: string;
   onProgress?: (step: string) => void;
-  /** Set when generating from a content calendar entry, so the planned title, slug and keywords are kept. */
-  calendar?: {
+  /** Set when generating from a saved idea, so its title, slug and keywords are kept. */
+  idea?: {
     slug?: string;
     keywords?: string[];
     category?: string;
@@ -29,7 +29,7 @@ export interface PipelineOptions {
 export async function runContentPipeline(
   options: PipelineOptions,
 ): Promise<ContentResult> {
-  const { userTopic, customInstruction, apiKey, onProgress, calendar } =
+  const { userTopic, customInstruction, apiKey, onProgress, idea } =
     options;
   const steps: string[] = [];
 
@@ -44,11 +44,11 @@ export async function runContentPipeline(
     // 1. Content Strategy & Keywords
     log("Planning keywords");
     const dynamicConfig = await generateDynamicConfig(userTopic, apiKey);
-    if (calendar) {
-      // The calendar entry is the plan: keep its title and keyword research.
+    if (idea) {
+      // The idea is the plan: keep its title and keyword research.
       dynamicConfig.topic = userTopic;
-      if (calendar.keywords?.length) {
-        dynamicConfig.target_phrases = calendar.keywords;
+      if (idea.keywords?.length) {
+        dynamicConfig.target_phrases = idea.keywords;
       }
     }
     log(`Keywords: ${dynamicConfig.target_phrases.slice(0, 4).join(", ")}`);
@@ -114,10 +114,10 @@ export async function runContentPipeline(
       dynamicConfig.target_phrases,
       customInstruction,
       retryAttempt,
-      calendar,
+      idea,
     );
 
-    // Slug collision prevention: if the slug already exists in the output folder, try a variation
+    // Slug collision prevention: if the slug already exists in the content folder, try a variation
     while (postExists(metaData.slug) && retryAttempt < 4) {
       retryAttempt++;
       log(`Slug "${metaData.slug}" is taken, trying another`);
@@ -127,7 +127,7 @@ export async function runContentPipeline(
         dynamicConfig.target_phrases,
         customInstruction,
         retryAttempt,
-        calendar,
+        idea,
       );
     }
 

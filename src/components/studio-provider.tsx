@@ -9,7 +9,7 @@ export interface StudioSite {
   host: string;
   /** Leading slash, no trailing slash; "" when posts live at the site root */
   blogPath: string;
-  outputDir: string;
+  contentDir: string;
 }
 
 interface StudioContextValue {

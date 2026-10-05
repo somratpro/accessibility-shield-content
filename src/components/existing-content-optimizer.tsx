@@ -4,11 +4,13 @@ import {
   AntiAIAuditResult,
   OptimizationResult,
 } from "@/lib/ai/content-optimizer";
+import { postIssues } from "@/lib/post-issues";
 import type { SearchPerformance } from "@/lib/search-console";
 import { cn } from "@/lib/utils";
 import { marked } from "marked";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
+import { PostsListSkeleton } from "./page-skeletons";
 import { useStudio } from "./studio-provider";
 import { Button } from "./ui/button";
 import { Card } from "./ui/card";
@@ -101,10 +103,16 @@ export function ExistingContentOptimizer() {
       });
       const data = await res.json();
       if (!data.success) throw new Error(data.error || "Save failed");
-      toast.success(`Saved ${activeSlug}.md`);
+      // The server re-audits the saved file; report what it found.
+      const remaining = postIssues(data.audit);
+      if (remaining.length) {
+        toast.warning(`Saved ${activeSlug}.md, but it still has ${remaining.join(", ")}. Run Clean up again to keep improving it.`);
+      } else {
+        toast.success(`Saved ${activeSlug}.md. It passes all checks.`);
+      }
       setResult(null);
       setActiveSlug(null);
-      load();
+      await load();
     } catch (err: any) {
       toast.error(err?.message || "Save failed");
     } finally {
@@ -117,9 +125,9 @@ export function ExistingContentOptimizer() {
       <div>
         <h1 className="text-lg font-semibold">
           Published posts{" "}
-          <span className="font-normal text-muted">({posts.length})</span>
+          <span className="font-normal text-muted-foreground">({posts.length})</span>
         </h1>
-        <p className="mt-0.5 text-sm text-muted">
+        <p className="mt-0.5 text-sm text-muted-foreground">
           {loading
             ? "Checking posts…"
             : needCleanup > 0
@@ -148,8 +156,8 @@ export function ExistingContentOptimizer() {
                   className={cn(
                     "rounded-md px-2.5 py-1 text-xs capitalize",
                     view === v
-                      ? "bg-surface-2 font-medium"
-                      : "text-muted hover:text-fg",
+                      ? "bg-light font-medium"
+                      : "text-muted-foreground hover:text-foreground",
                   )}
                 >
                   {v === "optimized" ? "New markdown" : v}
@@ -165,8 +173,19 @@ export function ExistingContentOptimizer() {
               </Button>
             </div>
           </div>
+          <p
+            role="status"
+            className={cn(
+              "border-b border-border px-5 py-2.5 text-sm",
+              result.remainingIssues.length ? "text-warning" : "text-success",
+            )}
+          >
+            {result.remainingIssues.length
+              ? `Checked again: still ${result.remainingIssues.join(", ")}. Saving keeps the improvements so far.`
+              : "Checked again: the cleaned version passes all checks."}
+          </p>
           {result.changesSummary.length > 0 && (
-            <ul className="border-b border-border px-5 py-3 text-xs text-muted">
+            <ul className="border-b border-border px-5 py-3 text-xs text-muted-foreground">
               {result.changesSummary.map((c, i) => (
                 <li key={i}>{c}</li>
               ))}
@@ -177,7 +196,9 @@ export function ExistingContentOptimizer() {
               <div
                 className="prose-preview"
                 dangerouslySetInnerHTML={{
-                  __html: marked.parse(result.optimizedMarkdown) as string,
+                  __html: marked.parse(
+                    result.optimizedMarkdown.replace(/^---\n[\s\S]*?\n---\n/, ""),
+                  ) as string,
                 }}
               />
             ) : (
@@ -192,19 +213,19 @@ export function ExistingContentOptimizer() {
       )}
 
       {loading && posts.length === 0 ? (
-        <p className="text-sm text-muted">Loading…</p>
+        <PostsListSkeleton />
       ) : (
-        <ul className="divide-y divide-border rounded-lg border border-border bg-surface">
+        <ul className="divide-y divide-border rounded-lg border border-border bg-background">
           {sorted.map((post) => {
             const issues = issuesOf(post);
             return (
               <li key={post.slug} className="flex items-center gap-4 p-4">
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-medium">{post.title}</p>
-                  <p className="mt-0.5 truncate text-xs text-muted">
+                  <p className="mt-0.5 truncate text-xs text-muted-foreground">
                     {site.blogPath}/{post.slug} · {post.wordCount.toLocaleString()} words
                     {issues.length > 0 && (
-                      <span className="text-warn"> · {issues.join(", ")}</span>
+                      <span className="text-warning"> · {issues.join(", ")}</span>
                     )}
                   </p>
                 </div>
@@ -231,18 +252,7 @@ export function ExistingContentOptimizer() {
   );
 }
 
-/** Concrete, fixable problems the cleanup pass removes. Empty means the post is fine. */
-function issuesOf(post: AuditedPost): string[] {
-  const issues: string[] = [];
-  const dashes = post.audit?.emDashCount ?? 0;
-  const phrases = post.audit?.aiClicheCount ?? 0;
-  const burstiness = post.audit?.burstinessScore ?? 100;
-  if (dashes) issues.push(`${dashes} em-dash${dashes === 1 ? "" : "es"}`);
-  if (phrases) issues.push(`${phrases} AI-sounding word${phrases === 1 ? "" : "s"}`);
-  // Uniform sentence length is the strongest signal AI detectors use.
-  if (burstiness < 70) issues.push("uniform sentence length");
-  return issues;
-}
+const issuesOf = (post: AuditedPost) => postIssues(post.audit);
 
 function PerformanceCell({
   data,
@@ -251,26 +261,26 @@ function PerformanceCell({
 }) {
   if (!data)
     return (
-      <span className="w-36 text-right text-xs text-muted">
+      <span className="w-36 text-right text-xs text-muted-foreground">
         Not in Google yet
       </span>
     );
   return (
     <dl className="grid w-36 shrink-0 grid-cols-3 gap-2 text-right text-xs">
       <div>
-        <dt className="text-muted">Clicks</dt>
+        <dt className="text-muted-foreground">Clicks</dt>
         <dd className="font-medium tabular-nums">
           {data.clicks.toLocaleString()}
         </dd>
       </div>
       <div>
-        <dt className="text-muted">Views</dt>
+        <dt className="text-muted-foreground">Views</dt>
         <dd className="font-medium tabular-nums">
           {data.impressions.toLocaleString()}
         </dd>
       </div>
       <div>
-        <dt className="text-muted">Rank</dt>
+        <dt className="text-muted-foreground">Rank</dt>
         <dd className="font-medium tabular-nums">{data.position.toFixed(0)}</dd>
       </div>
     </dl>

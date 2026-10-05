@@ -6,7 +6,7 @@ export const maxDuration = 800;
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { topic, customInstruction, apiKey, calendar } = body;
+    const { topic, customInstruction, apiKey, idea } = body;
 
     if (!topic || typeof topic !== "string" || topic.trim().length < 3) {
       return new Response(
@@ -37,19 +37,19 @@ export async function POST(req: NextRequest) {
           userTopic: topic.trim(),
           customInstruction,
           apiKey,
-          calendar:
-            calendar && typeof calendar === "object"
+          idea:
+            idea && typeof idea === "object"
               ? {
                   slug:
-                    typeof calendar.slug === "string" ? calendar.slug : undefined,
-                  keywords: Array.isArray(calendar.keywords)
-                    ? calendar.keywords.filter(
+                    typeof idea.slug === "string" ? idea.slug : undefined,
+                  keywords: Array.isArray(idea.keywords)
+                    ? idea.keywords.filter(
                         (k: unknown) => typeof k === "string",
                       )
                     : undefined,
                   category:
-                    typeof calendar.category === "string"
-                      ? calendar.category
+                    typeof idea.category === "string"
+                      ? idea.category
                       : undefined,
                 }
               : undefined,

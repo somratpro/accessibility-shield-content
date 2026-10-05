@@ -4,9 +4,9 @@ import path from "path";
 import { frontmatterKey } from "./frontmatter";
 import { BrandContext, requireStudioConfig } from "./studio-config";
 
-/** The folder posts are read from and written to (CONTENT_OUTPUT_DIR). */
-export function getOutputDir(): string {
-  return requireStudioConfig().site.outputDir;
+/** The folder posts are read from and written to (CONTENT_DIR). */
+export function getContentDir(): string {
+  return requireStudioConfig().site.contentDir;
 }
 
 export interface ExistingBlogPostMeta {
@@ -64,19 +64,19 @@ function readPost(
   };
 }
 
-/** Lists the markdown posts in the output folder (files starting with "_" are skipped). */
+/** Lists the markdown posts in the content folder (files starting with "_" are skipped). */
 export function getExistingBlogPosts(): ExistingBlogPostMeta[] {
   const { site, brand } = requireStudioConfig();
-  if (!fs.existsSync(site.outputDir)) return [];
+  if (!fs.existsSync(site.contentDir)) return [];
 
   const posts: ExistingBlogPostMeta[] = [];
-  for (const file of fs.readdirSync(site.outputDir)) {
+  for (const file of fs.readdirSync(site.contentDir)) {
     if (!file.endsWith(".md") || file.startsWith("_")) continue;
     try {
       const { rawMarkdown, body, frontmatter, ...meta } = readPost(
         brand,
         file,
-        path.join(site.outputDir, file),
+        path.join(site.contentDir, file),
       );
       posts.push(meta);
     } catch (e) {
@@ -95,7 +95,7 @@ export function getExistingBlogPostBySlug(
   const filename = path.basename(
     slugOrFilename.endsWith(".md") ? slugOrFilename : `${slugOrFilename}.md`,
   );
-  const fullPath = path.join(site.outputDir, filename);
+  const fullPath = path.join(site.contentDir, filename);
   if (!fs.existsSync(fullPath)) return null;
 
   try {
@@ -108,13 +108,13 @@ export function getExistingBlogPostBySlug(
 
 export function postExists(slug: string): boolean {
   try {
-    return fs.existsSync(path.join(getOutputDir(), `${slug}.md`));
+    return fs.existsSync(path.join(getContentDir(), `${slug}.md`));
   } catch {
     return false;
   }
 }
 
-/** Writes or overwrites a post in the output folder. */
+/** Writes or overwrites a post in the content folder. */
 export function savePost(
   filename: string,
   content: string,
@@ -124,7 +124,7 @@ export function savePost(
   alreadyExisted: boolean;
   bytes: number;
 } {
-  const dir = getOutputDir();
+  const dir = getContentDir();
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }

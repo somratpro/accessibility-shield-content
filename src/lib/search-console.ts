@@ -6,7 +6,9 @@ import { requireStudioConfig } from "./studio-config";
  *
  * Setup: create a service account in Google Cloud, enable the "Google Search Console API",
  * then add the service account email as a user (Restricted is enough) on the property in
- * Search Console. Set GSC_CLIENT_EMAIL, GSC_PRIVATE_KEY and GSC_SITE_URL in .env.
+ * Search Console. Set GSC_CLIENT_EMAIL and GSC_PRIVATE_KEY in .env. The property is
+ * found from the context file's url (domain property first, then URL-prefix); set
+ * GSC_SITE_URL only if it's registered under a different URL.
  */
 
 export interface PagePerformance {
@@ -31,9 +33,15 @@ let cache: { at: number; data: SearchPerformance } | null = null;
 function config() {
   const clientEmail = process.env.GSC_CLIENT_EMAIL?.trim();
   const privateKey = process.env.GSC_PRIVATE_KEY?.replace(/\\n/g, "\n").trim();
-  // "sc-domain:example.com" for a domain property, or the URL-prefix form.
-  const siteUrl = process.env.GSC_SITE_URL?.trim();
-  return clientEmail && privateKey && siteUrl ? { clientEmail, privateKey, siteUrl } : null;
+  return clientEmail && privateKey ? { clientEmail, privateKey } : null;
+}
+
+/** Search Console property ids to try, e.g. "sc-domain:example.com" then "https://example.com/". */
+function propertyCandidates(siteUrl: string): string[] {
+  const explicit = process.env.GSC_SITE_URL?.trim();
+  if (explicit) return [explicit];
+  const { origin, hostname } = new URL(siteUrl);
+  return [`sc-domain:${hostname.replace(/^www\./, "")}`, `${origin}/`];
 }
 
 const base64url = (input: string | Buffer) => Buffer.from(input).toString("base64url");
@@ -78,8 +86,8 @@ export async function getBlogSearchPerformance(): Promise<SearchPerformance> {
   if (!cfg) return { configured: false, pages: {} };
   if (cache && Date.now() - cache.at < CACHE_MS) return cache.data;
 
-  // Posts live at BLOG_PATH/<slug> ("" = the site root).
-  const { blogPath } = requireStudioConfig().site;
+  // Posts live at <blogPath>/<slug> ("" = the site root).
+  const { blogPath, url: siteUrl } = requireStudioConfig().site;
   const slugPattern = new RegExp(`^${escapeRegex(blogPath)}/([^/]+)/?$`);
 
   // Search Console data lags by ~2 days.
@@ -90,24 +98,35 @@ export async function getBlogSearchPerformance(): Promise<SearchPerformance> {
 
   try {
     const token = await getAccessToken(cfg.clientEmail, cfg.privateKey);
-    const res = await fetch(
-      `https://www.googleapis.com/webmasters/v3/sites/${encodeURIComponent(cfg.siteUrl)}/searchAnalytics/query`,
-      {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          startDate: isoDay(start),
-          endDate: isoDay(end),
-          dimensions: ["page"],
-          dimensionFilterGroups: blogPath
-            ? [{ filters: [{ dimension: "page", operator: "contains", expression: `${blogPath}/` }] }]
-            : undefined,
-          rowLimit: 1000,
-        }),
-      },
-    );
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error?.message || "Search Console request failed");
+    const query = (property: string) =>
+      fetch(
+        `https://www.googleapis.com/webmasters/v3/sites/${encodeURIComponent(property)}/searchAnalytics/query`,
+        {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            startDate: isoDay(start),
+            endDate: isoDay(end),
+            dimensions: ["page"],
+            dimensionFilterGroups: blogPath
+              ? [{ filters: [{ dimension: "page", operator: "contains", expression: `${blogPath}/` }] }]
+              : undefined,
+            rowLimit: 1000,
+          }),
+        },
+      );
+
+    // Without GSC_SITE_URL, use the first property the service account can read.
+    let data: any;
+    for (const property of propertyCandidates(siteUrl)) {
+      const res = await query(property);
+      data = await res.json();
+      if (res.ok) break;
+      if (res.status !== 403 && res.status !== 404) {
+        throw new Error(data.error?.message || "Search Console request failed");
+      }
+    }
+    if (data?.error) throw new Error(data.error.message || "Search Console request failed");
 
     const pages: Record<string, PagePerformance> = {};
     for (const row of data.rows || []) {

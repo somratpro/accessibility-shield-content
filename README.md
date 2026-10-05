@@ -1,56 +1,99 @@
 # Content Studio
 
-Plans, writes, humanizes and publishes markdown blog posts for any website. Brand knowledge comes from one context file; paths, URLs and keys come from `.env`.
+Suggests post ideas, writes them in a natural human voice, and saves them as markdown straight into your website's blog folder. Works with any site that keeps its posts as `.md` files.
 
-## Setup
+## Quick start
+
+**1. Run the app**
 
 ```bash
 pnpm install
 cp .env.example .env
-cp examples/content-context.example.md content-context.md
 pnpm dev --port 3005
 ```
 
-1. In `.env`, set `SITE_NAME`, `SITE_URL`, `BLOG_PATH`, `CONTENT_OUTPUT_DIR` (the folder your site reads posts from) and `CONTENT_CONTEXT_FILE`.
-2. Rewrite `content-context.md` for your brand: what you sell and don't, who reads the blog, facts the writer may use (with sources), claims it must never make, internal links and categories. Every field is explained in the example. To draft it from your site's code instead, see [Generate the context file from your site](#generate-the-context-file-from-your-site).
-3. Add a Groq API key in `.env` (`GROQ_API_KEY=gsk_...`) or from the key button in the header.
+**2. Fill in `.env`.** Where your posts are and where your context file will be:
 
-If something is missing or invalid, the app shows a setup screen listing what to fix. Restart the dev server after editing `.env`; context file edits apply on the next page load.
+```bash
+CONTENT_DIR="../my-site/src/content/blog"
+CONTEXT_FILE="../my-site/content-context.md"
+```
 
-## Generate the context file from your site
+**3. Describe your site.** Create that context file with:
 
-[`examples/generate-context-prompt.md`](examples/generate-context-prompt.md) is a prompt for a coding agent (Claude Code, Cursor, Copilot) opened in your website's repository. The agent reads your pages, product code and existing posts, then:
+```yaml
+---
+name: My Site
+url: https://example.com
+industry: home coffee brewing
+summary: One or two sentences on what you offer and who it's for.
+---
+```
 
-- writes `content-context.md`, using only facts it found in the code and marking anything it couldn't confirm with `# TODO:`,
-- picks up your posts' categories, tags, frontmatter keys and internal links,
-- reports the `.env` values (`SITE_URL`, `BLOG_PATH`, `CONTENT_OUTPUT_DIR`, `CONTENT_CONTEXT_FILE`).
+Open http://localhost:3005 and add a free [Groq API key](https://console.groq.com/keys) from the key button in the header. The app walks you through any step you missed.
 
-Review the file, resolve the TODOs, point `CONTENT_CONTEXT_FILE` at it and reload the studio. If a field is wrong, the setup screen says which one.
+## Get better posts
 
-## What goes where
+Those four lines are enough to start, but the writer only knows what the context file tells it. Add your audience, product facts (with sources), claims to avoid, internal links and categories:
 
-| `.env` (wiring and secrets) | Context file (brand knowledge) |
-| --- | --- |
-| `GROQ_API_KEY` | `name`, `tagline`, `industry`, `summary` |
-| `CONTENT_CONTEXT_FILE` | `audience` (first entry is the main reader) |
-| `SITE_NAME`, `SITE_URL`, `BLOG_PATH` | `product.does`, `product.doesNot`, `product.pages` |
-| `CONTENT_OUTPUT_DIR` | `facts.allowed` (with sources), `facts.banned` |
-| `CALENDAR_FILE` (default `./data/content-calendar.json`) | `links` (url, anchor, triggers) and fallback `cta` |
-| `DRAFT_MODEL`, `FAST_MODEL`, `REWRITE_MODELS` (optional) | `categories`, `defaultCategory`, `tags`, `acronyms` |
-| `GSC_CLIENT_EMAIL`, `GSC_PRIVATE_KEY`, `GSC_SITE_URL` (optional) | `competitors`, `avoidTopics`, `planning`, `outline` |
-| `ORIGINALITY_API_KEY` (optional) | `disclaimer` (text + trigger words), `voiceExamples`, `frontmatter` |
+- **Write it yourself:** copy fields from [`examples/content-context.example.md`](examples/content-context.example.md). Every field is explained there.
+- **Let a coding agent write it:** open Claude Code, Cursor or Copilot in your site's repo and paste [`examples/generate-context-prompt.md`](examples/generate-context-prompt.md). It reads your pages and existing posts, writes the file, and marks anything it couldn't confirm with `# TODO:`.
 
-The context file is Markdown with YAML frontmatter. The frontmatter holds the fields above; the Markdown body is free-form guidance (voice, pricing rules, terminology) added to every writing prompt.
+Edits to the context file show up on the next page load.
 
 ## Pages
 
-- **Calendar** (`/`): unpublished topics from `CALENDAR_FILE`, by date, each with an estimated impact (from search intent and urgency) and the reason it's worth writing. "Write" opens `/write` and drafts the post with the planned title, slug and keywords. "Add 6 ideas" adds 6 new ideas after the current plan, skipping anything already published or planned. A topic disappears once a post with its slug exists in `CONTENT_OUTPUT_DIR`. The calendar starts empty.
-- **Write** (`/write`): generate a post from any title, review it, ask for revisions, then save it to `CONTENT_OUTPUT_DIR`.
-- **Posts** (`/posts`): posts in `CONTENT_OUTPUT_DIR` with Google clicks, impressions and average rank for the last 28 days (once Search Console is connected), plus a "Clean up" button on any post with em-dashes, AI clichés or uniform sentence length.
+- **Dashboard** (`/`): posts published, the last post date, ideas waiting, posts needing cleanup, the next ideas to write, recent posts and (with Search Console) clicks and top posts.
+- **Ideas** (`/ideas`): post ideas, highest estimated impact first. "Add 6 ideas" asks the AI for new ones; "Write" drafts one; an idea disappears once its post exists.
+- **Write** (`/write`): draft a post from any title, ask for revisions, then save it to `CONTENT_DIR`.
+- **Posts** (`/posts`): your posts, with Google stats and a "Clean up" button on posts with em-dashes, AI clichés or uniform sentence length. Clean up fixes words and dashes, then checks the post again and rewrites it (up to 3 tries) while something still fails. It tells you before and after saving whether the post passes.
 
-## Output format
+---
 
-Posts are saved as `<slug>.md` with this frontmatter by default:
+## Reference
+
+### Where things live
+
+| What | Where |
+| --- | --- |
+| Posts | `CONTENT_DIR`, as `<slug>.md` (files starting with `_` are skipped) |
+| Context file | `CONTEXT_FILE`; if empty, the nearest `content-context.md` in `CONTENT_DIR` or a folder above it, else `./content-context.md` in this app |
+| Saved ideas | `content-ideas.json` next to the context file |
+| Post URL path | `"/"` + the `CONTENT_DIR` folder name (`.../content/blog` → `/blog`); override with `blogPath` in the context file |
+
+Keep the context file in each site's repo so every site carries its own brand notes and ideas; switching sites means changing the `.env` lines.
+
+### Optional `.env` settings
+
+| Variable | Purpose |
+| --- | --- |
+| `GROQ_API_KEY` | Groq key, instead of adding it in the browser |
+| `CONTEXT_FILE` | Path to the context file (found automatically when empty) |
+| `DRAFT_MODEL`, `FAST_MODEL`, `REWRITE_MODELS` | Override the Groq models |
+| `GSC_CLIENT_EMAIL`, `GSC_PRIVATE_KEY` | Google Search Console stats (see below) |
+| `GSC_SITE_URL` | Only if your Search Console property isn't registered under the context file's `url` |
+| `ORIGINALITY_API_KEY` | Scan drafts on Originality.ai and re-humanize ones scoring 50%+ AI |
+
+### Context file fields
+
+Markdown with YAML frontmatter. The Markdown body is free-form guidance (voice, pricing rules, terminology) added to every writing prompt.
+
+| Field | Purpose |
+| --- | --- |
+| `name`, `url`, `industry`, `summary` | **Required.** Site name, public URL, your field, what you offer |
+| `tagline`, `blogPath` | One-line tagline; post URL path override |
+| `audience` | Who reads the blog (the first entry is the main reader) |
+| `product.does`, `product.doesNot`, `product.pages` | What you offer, what you must never claim, pages posts may link to |
+| `facts.allowed`, `facts.banned` | Facts the writer may use (with sources), claims it must never make |
+| `links`, `cta` | Automatic internal links (url, anchor, trigger phrases); fallback call to action |
+| `categories`, `defaultCategory`, `tags`, `acronyms` | Post metadata |
+| `allowedWords` | Real terms in your field the AI-word check shouldn't flag (e.g. `robust`) |
+| `competitors`, `avoidTopics`, `planning`, `outline` | Idea suggestions and article structure |
+| `disclaimer`, `voiceExamples`, `frontmatter` | Disclaimer with trigger words, voice examples, output frontmatter keys |
+
+### Output format
+
+Posts are saved with this frontmatter:
 
 ```yaml
 ---
@@ -64,7 +107,7 @@ draft: false
 ---
 ```
 
-`updated` is written only when a post has one. To match another site generator, rename or drop keys and add fixed ones in the context file:
+`updated` is added only when a post has one. If your site uses different keys, rename or drop them in the context file (the Posts page reads them the same way):
 
 ```yaml
 frontmatter:
@@ -75,24 +118,18 @@ frontmatter:
     layout: post           # added to every new post
 ```
 
-The Posts page reads posts with the same key names.
+### Google Search Console
 
-## Connect Google Search Console (optional)
-
-1. In Google Cloud, create a project, enable the **Google Search Console API**, and create a service account with a JSON key.
+1. In Google Cloud, enable the **Google Search Console API** and create a service account with a JSON key.
 2. In Search Console, open your property, go to **Settings > Users and permissions**, and add the service account email as a Restricted user.
-3. Set `GSC_CLIENT_EMAIL`, `GSC_PRIVATE_KEY` (the `private_key` value from the JSON) and `GSC_SITE_URL` (`sc-domain:example.com` for a domain property) in `.env`, then restart the dev server. Pages are matched by `BLOG_PATH`.
+3. Set `GSC_CLIENT_EMAIL` and `GSC_PRIVATE_KEY` (the `private_key` value from the JSON) in `.env` and restart. The property is found from the context file's `url`.
 
-## Humanizer
+### How posts are written
 
-Modelled on content-hub's generator, without its author-persona system (no named author, no invented stories, no fake trust signals):
-
-1. **Draft** (`seed-generator.ts`): conversational, opinionated voice at temperature 0.9 with frequency/presence penalties, like content-hub.
-2. **Spoken-voice rewrite** (`humanizer.ts`): each section is rewritten by Qwen (gpt-oss as fallback, see `REWRITE_MODELS`) in the casual voice of an experienced practitioner in the context's `industry`. Code and tables are locked; a section is kept as-is if links, placeholders or too much text go missing. `voiceExamples` in the context file teach it your voice; without them it uses neutral examples.
-3. **Imperfection passes** (`imperfection-passes.ts`): content-hub's passes and rates (fillers, starters, punctuation variety, transitions, rhetorical questions, asides), with punctuation and markdown kept intact.
+1. **Draft** (`seed-generator.ts`): a conversational, opinionated draft (temperature 0.9 with frequency/presence penalties) that answers the search query up front and ends with an FAQ.
+2. **Spoken-voice rewrite** (`humanizer.ts`): each section is rewritten by Qwen (gpt-oss as fallback) in the voice of an experienced practitioner in your `industry`. Code and tables are locked, and a section is kept as-is if links or too much text go missing. `voiceExamples` teach it your voice.
+3. **Imperfection passes** (`imperfection-passes.ts`): content-hub's fillers, starters, punctuation variety and asides, placed only where they stay grammatical (no names lowercased, no doubled openers) and each phrase used once per post.
 4. **Cleanup** (`content-humanizer.ts`): contractions, AI-tell word swaps, plain typography.
-5. **Optional AI check** (`ai-detector.ts`): with `ORIGINALITY_API_KEY` set, drafts scoring 50%+ AI on Originality.ai are re-humanized up to twice and the best version is kept (content-hub's loop).
+5. **Optional AI check** (`ai-detector.ts`): with `ORIGINALITY_API_KEY`, drafts scoring 50%+ AI are re-humanized up to twice and the best version is kept.
 
-## Content rules
-
-Prompts are built from the context file in `src/lib/brand-prompt.ts` and `src/lib/ai/seed-generator.ts`. Generated posts must answer the search query up front, end with an FAQ, cite sources for numbers, never invent stories or stats, and follow the context file's fact rules. Read every draft before publishing.
+There's no named author, no invented stories and no fake trust signals. Numbers must come with a source, and the context file's fact rules apply to every prompt. Read every draft before publishing.

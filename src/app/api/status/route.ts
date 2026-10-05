@@ -21,7 +21,7 @@ export async function GET() {
       groqKeyConfigured: hasEnvGroqKey,
       groqKeySource: hasEnvGroqKey ? "env" : "missing",
       site: config.site.name,
-      targetAppDir: config.site.outputDir,
+      targetAppDir: config.site.contentDir,
       articlesCount: existingPosts.length,
       articles: existingPosts.map((p) => ({
         slug: p.slug,

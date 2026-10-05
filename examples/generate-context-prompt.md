@@ -2,7 +2,7 @@
 
 Open a coding agent (Claude Code, Cursor, Copilot) **in your website's repository**, then paste everything below the line. Replace `<CONTENT_STUDIO_DIR>` with the path to this Content Studio folder, so the agent can read the example file. If it can't reach that folder, the field list in the prompt is enough.
 
-The agent writes `content-context.md` and suggests `.env` values. Review the file before using it: anything it couldn't confirm from the code is marked `TODO`.
+The agent writes `content-context.md` at your site's repo root and gives you the lines to paste into Content Studio's `.env`. Review the file before using it: anything it couldn't confirm from the code is marked `TODO`.
 
 ---
 
@@ -20,9 +20,11 @@ Template: <CONTENT_STUDIO_DIR>/examples/content-context.example.md. Read it firs
 - Facts with sources: statistics, regulations, studies or standards that the site already cites. Keep the source exactly as the site names it.
 
 2. WRITE content-context.md AT THE REPO ROOT
-Use ONLY these frontmatter fields (unknown keys are rejected). Only `industry` and `summary` are required; leave out a field rather than guess.
+Use ONLY these frontmatter fields (unknown keys are rejected). Only `name`, `url`, `industry` and `summary` are required; leave out a field rather than guess.
 
 - name: brand name.
+- url: the production site URL (from config, env files, sitemap or metadata).
+- blogPath: the URL path posts are served under (e.g. /blog). Leave it out if it equals "/" + the name of the folder posts are stored in.
 - tagline: one line, from the site.
 - industry: a short noun phrase for the field the brand works in (it becomes "an experienced practitioner in <industry>").
 - summary: 1-2 sentences, what the business is and who it's for.
@@ -56,12 +58,9 @@ Rules for the file:
 - Where something is likely true but you couldn't confirm it in the code, add it as a YAML comment starting with "# TODO:" instead of a real value.
 
 3. REPORT BACK
-- The .env values for Content Studio:
-  SITE_NAME=...
-  SITE_URL=...           (production URL from config, env files or metadata)
-  BLOG_PATH=...          (URL path posts are served under, e.g. /blog)
-  CONTENT_OUTPUT_DIR=... (absolute path of the folder posts are read from)
-  CONTENT_CONTEXT_FILE=... (absolute path of the file you wrote)
+- The lines for Content Studio's .env:
+  CONTENT_DIR="<absolute path of the folder posts are read from>"
+  CONTEXT_FILE="<absolute path of the file you wrote>"
 - Whether posts are .md (Content Studio reads and writes .md only).
 - Every TODO you left, and anything in the code that contradicts the marketing copy.
 ```

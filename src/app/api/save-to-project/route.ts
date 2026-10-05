@@ -1,4 +1,4 @@
-import { getOutputDir, savePost } from "@/lib/posts-store";
+import { getContentDir, savePost } from "@/lib/posts-store";
 import { NextRequest, NextResponse } from "next/server";
 
 export async function POST(req: NextRequest) {
@@ -22,7 +22,7 @@ export async function POST(req: NextRequest) {
         ? `Updated existing post at ${result.filePath}`
         : `Successfully published new post to ${result.filePath}`,
       bytes: result.bytes,
-      targetDir: getOutputDir(),
+      targetDir: getContentDir(),
     });
   } catch (error: any) {
     console.error("Save to project error:", error);

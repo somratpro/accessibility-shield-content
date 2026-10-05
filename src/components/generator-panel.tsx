@@ -65,7 +65,7 @@ export function GeneratorPanel({
 
         <div className="space-y-1.5">
           <label htmlFor="notes" className="text-sm font-medium">
-            Notes <span className="font-normal text-muted">(optional)</span>
+            Notes <span className="font-normal text-muted-foreground">(optional)</span>
           </label>
           <Textarea
             id="notes"
@@ -77,7 +77,7 @@ export function GeneratorPanel({
         </div>
 
         <div className="flex items-center justify-between gap-3 pt-1">
-          <label className="flex cursor-pointer items-center gap-2 text-sm text-muted">
+          <label className="flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
             <input
               type="checkbox"
               checked={autoPublish}

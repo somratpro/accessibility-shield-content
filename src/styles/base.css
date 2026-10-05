@@ -1,0 +1,94 @@
+html {
+  @apply text-base;
+  overflow-y: scroll;
+  overflow-x: clip;
+  scrollbar-gutter: stable;
+}
+
+body {
+  @apply bg-background text-base font-normal leading-relaxed text-text-default;
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  min-height: 100vh;
+  overflow-x: clip;
+}
+
+img,
+svg,
+video,
+canvas,
+audio,
+iframe,
+embed,
+object {
+  max-width: 100%;
+}
+
+hr {
+  @apply my-8 border-t border-border;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  @apply font-bold leading-tight text-text-strong;
+}
+
+h1,
+.h1 {
+  @apply text-h1-sm md:text-h1;
+}
+
+h2,
+.h2 {
+  @apply text-h2-sm md:text-h2;
+}
+
+h3,
+.h3 {
+  @apply text-h3-sm md:text-h3;
+}
+
+h4,
+.h4 {
+  @apply text-h4;
+}
+
+h5,
+.h5 {
+  @apply text-h5;
+}
+
+h6,
+.h6 {
+  @apply text-h6;
+}
+
+b,
+strong {
+  @apply font-semibold text-text-strong;
+}
+
+code {
+  @apply after:border-none;
+}
+
+button {
+  @apply cursor-pointer;
+}
+
+/* Accessible keyboard focus indicators (WCAG 2.4.7 / 2.4.11) */
+:focus-visible {
+  outline: 3px solid var(--accent-color, #0055e9);
+  outline-offset: 2px;
+}
+
+/* WCAG 1.4.1 (Level A) - Inline links in text blocks must have visual indicators (not color alone) */
+p a:not([class*="btn"]):not([role="button"]):not([data-slot="button"]),
+li a:not([class*="btn"]):not([role="button"]):not([data-slot="button"]) {
+  text-decoration-line: underline;
+  text-underline-offset: 2px;
+}
+

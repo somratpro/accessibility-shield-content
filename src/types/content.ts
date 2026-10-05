@@ -52,8 +52,8 @@ export interface FollowupInstructionOptions {
   targetAudience?: string;
 }
 
-/** Planned values from a content calendar entry, passed through generation unchanged. */
-export interface CalendarGenerationContext {
+/** Planned values from an idea, passed through generation unchanged. */
+export interface IdeaGenerationContext {
   slug?: string;
   keywords?: string[];
   category?: string;

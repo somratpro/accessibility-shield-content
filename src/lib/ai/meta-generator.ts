@@ -131,15 +131,15 @@ export function generateMetaContent(
   targetKeywords: string[],
   _customInstruction?: string,
   retryAttempt: number = 0,
-  calendar?: { slug?: string; category?: string },
+  idea?: { slug?: string; category?: string },
 ): MetaData {
   const { brand } = requireStudioConfig();
   const title = topic.trim().replace(/[.\s]+$/, "");
   const metaTitle = buildMetaTitle(title);
   const metaDescription = buildMetaDescription(content);
 
-  const baseSlug = calendar?.slug
-    ? slugify(calendar.slug)
+  const baseSlug = idea?.slug
+    ? slugify(idea.slug)
     : buildShortSlug(title);
   const slug = retryAttempt > 0 ? `${baseSlug}-${retryAttempt + 1}` : baseSlug;
 
@@ -147,7 +147,7 @@ export function generateMetaContent(
     brand,
     title,
     targetKeywords,
-    calendar?.category,
+    idea?.category,
   );
 
   const acronyms = new Set(

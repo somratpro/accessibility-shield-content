@@ -1,13 +1,21 @@
 ---
 # Content Studio context file.
-# Everything the studio knows about your brand comes from this file. The YAML below holds
-# structured fields; the Markdown body after the closing --- is free-form guidance that is
-# added to every writing prompt. Only `industry` and `summary` are required.
+# Everything the writer knows about your brand comes from this file. Point
+# CONTEXT_FILE in .env at it, or save it as content-context.md at your site's repo
+# root and the studio finds it on its own. Saved post ideas go next to it
+# (content-ideas.json).
+# The YAML below holds structured fields; the Markdown body after the closing --- is
+# free-form guidance added to every writing prompt.
+# Required: name, url, industry, summary.
 #
 # Fernhouse is a fictional brand used as an example.
 
-# Brand name used in prompts. Defaults to SITE_NAME from .env.
+# Site name and public URL.
 name: Fernhouse
+url: https://fernhouse.example
+# URL path posts are served under. Defaults to "/" + the CONTENT_DIR folder name
+# (".../content/blog" -> "/blog"). Use "/" when posts live at the site root.
+# blogPath: /journal
 tagline: Healthy houseplants, delivered, with care help when you need it
 # Used for the writing voice: "an experienced practitioner in <industry>".
 industry: houseplant care
@@ -94,10 +102,13 @@ defaultCategory: Plant Care
 tags: [Houseplant Care, Low Light Plants, Pet-Safe Plants, Plant Problems]
 # Words kept uppercase in tags (ai, api, faq, seo and url always are).
 acronyms: [LED, UV, DIY]
+# Real terms in your field that the AI-word check shouldn't flag or replace
+# (it otherwise swaps words like "robust", "seamless" or "leverage").
+# allowedWords: [robust]
 
 # Other brands. Only used for "<competitor> alternative" topic ideas.
 competitors: [Leafbox, Rootly]
-# Topics the calendar never plans.
+# Topics never suggested as ideas.
 avoidTopics:
   - outdoor gardening, lawns and landscaping
   - growing plants for consumption

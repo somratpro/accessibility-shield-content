@@ -1,7 +1,7 @@
 "use client";
 
-import { CalendarTopic } from "@/lib/ai/calendar-generator";
-import { CalendarGenerationContext, ContentResult } from "@/types/content";
+import type { Idea } from "@/lib/ideas";
+import { ContentResult, IdeaGenerationContext } from "@/types/content";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -15,7 +15,7 @@ interface GenerateParams {
   topic: string;
   customInstruction?: string;
   autoPublish?: boolean;
-  calendar?: CalendarGenerationContext;
+  idea?: IdeaGenerationContext;
 }
 
 /** Reads the /api/generate server-sent event stream. */
@@ -40,8 +40,8 @@ async function readEventStream(
   }
 }
 
-function calendarInstruction(topic: CalendarTopic) {
-  return `Why this article: ${topic.rationale}\nSearch intent: ${topic.searchIntent}\nTarget keywords: ${topic.keywords.join(", ")}`;
+function ideaInstruction(idea: Idea) {
+  return `Why this article: ${idea.rationale}\nSearch intent: ${idea.searchIntent}\nTarget keywords: ${idea.keywords.join(", ")}`;
 }
 
 export function WriteStudio() {
@@ -80,7 +80,7 @@ export function WriteStudio() {
           topic: params.topic,
           customInstruction: params.customInstruction,
           apiKey: apiKey || undefined,
-          calendar: params.calendar,
+          idea: params.idea,
         }),
       });
       if (!res.ok || !res.body) {
@@ -103,31 +103,29 @@ export function WriteStudio() {
     }
   };
 
-  // Opened from the calendar (/write?topic=<id>): load that topic and start the draft once.
-  const topicId = searchParams.get("topic");
+  // Opened from the Ideas page (/write?idea=<id>): load that idea and start the draft once.
+  const ideaId = searchParams.get("idea");
   const startedFor = useRef<string | null>(null);
   useEffect(() => {
-    if (!topicId || !ready || startedFor.current === topicId) return;
-    startedFor.current = topicId;
-    fetch("/api/calendar")
+    if (!ideaId || !ready || startedFor.current === ideaId) return;
+    startedFor.current = ideaId;
+    fetch("/api/ideas")
       .then((r) => r.json())
       .then((data) => {
-        const topic: CalendarTopic | undefined = data.topics?.find(
-          (t: CalendarTopic) => t.id === topicId,
-        );
-        if (!topic) return toast.error("That calendar topic no longer exists");
-        const instruction = calendarInstruction(topic);
-        setDraft({ topic: topic.title, instruction });
+        const idea: Idea | undefined = data.ideas?.find((t: Idea) => t.id === ideaId);
+        if (!idea) return toast.error("That idea no longer exists");
+        const instruction = ideaInstruction(idea);
+        setDraft({ topic: idea.title, instruction });
         router.replace("/write"); // a refresh shouldn't start another draft
         if (!hasApiKey) return openKeyDialog();
         generate({
-          topic: topic.title,
+          topic: idea.title,
           customInstruction: instruction,
-          calendar: { slug: topic.slug, keywords: topic.keywords, category: topic.category },
+          idea: { slug: idea.slug, keywords: idea.keywords, category: idea.category },
         });
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [topicId, ready]);
+  }, [ideaId, ready]);
 
   return (
     <section className="space-y-6">

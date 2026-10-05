@@ -6,6 +6,7 @@ import {
   removeEmDashes,
   splitContentPreservingTables,
 } from "../utils";
+import { postIssues } from "../post-issues";
 import { applyAdvancedHumanization } from "./content-humanizer";
 import { humanizeArticle } from "./humanizer";
 import { optimizeInternalLinking } from "./internal-linker";
@@ -72,6 +73,129 @@ export const AI_CLICHE_PHRASES = [
   "in summary",
 ];
 
+const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** Words from the context file's allowedWords, lowercased. */
+function allowedWords(): string[] {
+  return requireStudioConfig().brand.allowedWords.map((w) => w.toLowerCase());
+}
+
+const mentionsAllowed = (phrase: string, allowed: string[]) =>
+  allowed.some((w) => new RegExp(`\\b${escapeRegex(w)}\\b`, "i").test(phrase));
+
+// Code, inline code and link targets: never counted as prose, never edited.
+const PROTECTED = /(^[ \t]*(?:```|~~~)[\s\S]*?^[ \t]*(?:```|~~~)[ \t]*$|`[^`\n]*`|\]\([^)]*\))/m;
+
+/** Applies `fn` to everything outside code and link targets (headings and lists included). */
+function mapText(body: string, fn: (text: string) => string): string {
+  return body
+    .split(new RegExp(PROTECTED.source, "gm"))
+    .map((part, i) => (i % 2 === 1 ? part : fn(part)))
+    .join("");
+}
+
+/** The prose parts only (what readers and AI detectors see as writing). */
+const textOnly = (body: string) =>
+  body
+    .split(new RegExp(PROTECTED.source, "gm"))
+    .filter((_, i) => i % 2 === 0)
+    .join(" ");
+
+// Plain replacements for AI-sounding phrases, longest first. Matching ignores case and
+// keeps a leading capital. Each entry fixes the cliché named in its pattern, so the
+// cleanup can remove everything the audit counts (except allowedWords).
+const WORD_FIXES: [string, string][] = [
+  ["in today's fast-paced digital landscape", "these days"],
+  ["in today's digital landscape", "these days"],
+  ["fast-paced digital landscape", "fast-moving online world"],
+  ["in today's fast-paced", "in today's busy"],
+  ["in this comprehensive guide", "in this guide"],
+  ["in this blog post,?", "below,"],
+  ["in conclusion,?", "the takeaway:"],
+  ["in summary,?", "in short,"],
+  ["it is important to remember that", "keep in mind that"],
+  ["it is important to remember", "keep in mind"],
+  ["it(?: is|'s) important to note that", "note that"],
+  ["it(?: is|'s) important to note", "note"],
+  ["it is worth noting that", "notably,"],
+  ["it is worth noting", "note"],
+  ["plays a crucial role in", "directly affects"],
+  ["crucial role", "central role"],
+  ["vital role", "key role"],
+  ["navigating the complex world of", "managing"],
+  ["navigating the complex", "handling the complex"],
+  ["without further ado,?", "so,"],
+  ["at the end of the day", "in the end"],
+  ["unlock the power of", "make the most of"],
+  ["unlock the power", "make the most"],
+  ["let's explore", "let's look at"],
+  ["to delve into", "to look at"],
+  ["delving into", "digging into"],
+  ["delve into", "dig into"],
+  ["dive deep into", "look closely at"],
+  ["dive deep", "look closely"],
+  ["a testament to", "clear proof of"],
+  ["tapestry of", "mix of"],
+  ["beacon of", "model of"],
+  ["game-changer", "big shift"],
+  ["moreover,?", "what's more,"],
+  ["furthermore,?", "beyond that,"],
+  ["additionally", "also"],
+  ["ultimately", "in the end"],
+  ["ensure that", "make sure"],
+  ["ensures", "makes sure"],
+  ["ensured", "made sure"],
+  ["ensuring", "making sure"],
+  ["ensure", "make sure"],
+  ["utilizes", "uses"],
+  ["utilized", "used"],
+  ["utilizing", "using"],
+  ["utilize", "use"],
+  ["leverages", "uses"],
+  ["leveraged", "used"],
+  ["leveraging", "using"],
+  ["leverage", "use"],
+  ["seamlessly", "smoothly"],
+  ["seamless", "smooth"],
+  ["streamlines", "simplifies"],
+  ["streamlined", "simplified"],
+  ["streamlining", "simplifying"],
+  ["streamline", "simplify"],
+  ["empowers", "helps"],
+  ["empowering", "helping"],
+  ["empower", "help"],
+  ["comprehensive", "complete"],
+  ["crucial", "important"],
+  ["robust", "solid"],
+  ["pivotal", "key"],
+  ["paramount", "most important"],
+  ["a myriad of", "lots of"],
+  ["myriad of", "lots of"],
+  ["myriad", "many"],
+  ["a plethora of", "lots of"],
+  ["plethora of", "lots of"],
+];
+
+/** Swaps AI-sounding phrases for plain ones outside code and links. Returns the count. */
+export function fixAiWords(body: string): { text: string; count: number } {
+  const allowed = allowedWords();
+  const fixes = WORD_FIXES.filter(([phrase]) => !mentionsAllowed(phrase.replace(/[,?]/g, ""), allowed)).map(
+    ([phrase, plain]) => [new RegExp(`\\b${phrase.replace(/'/g, "['’]")}(?![\\w-])`, "gi"), plain] as const,
+  );
+  let count = 0;
+  const text = mapText(body, (part) =>
+    fixes.reduce(
+      (acc, [pattern, plain]) =>
+        acc.replace(pattern, (match) => {
+          count++;
+          return /^[A-Z]/.test(match) ? plain.charAt(0).toUpperCase() + plain.slice(1) : plain;
+        }),
+      part,
+    ),
+  );
+  return { text, count };
+}
+
 /**
  * Audits text for AI patterns: em-dashes, clichés, sentence uniformity.
  */
@@ -83,10 +207,12 @@ export function auditContentForAntiAI(rawMarkdown: string): AntiAIAuditResult {
   const emDashMatches = body.match(/—|&mdash;/g);
   const emDashCount = emDashMatches ? emDashMatches.length : 0;
 
-  // 2. AI Clichés
-  const lowerBody = body.toLowerCase();
+  // 2. AI Clichés, in prose only (not code or link targets), skipping the site's allowedWords
+  const lowerBody = textOnly(body).toLowerCase();
+  const allowed = allowedWords();
   const clicheMatches: string[] = [];
   for (const phrase of AI_CLICHE_PHRASES) {
+    if (mentionsAllowed(phrase, allowed)) continue;
     const regex = new RegExp(
       `\\b${phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`,
       "gi",
@@ -210,11 +336,27 @@ export interface OptimizationResult {
   optimizedMarkdown: string;
   beforeAudit: AntiAIAuditResult;
   afterAudit: AntiAIAuditResult;
+  /** What the cleaned version still fails (empty = passes all checks) */
+  remainingIssues: string[];
   changesSummary: string[];
 }
 
+// Rewrite passes per cleanup. Each pass is a full Qwen rewrite, so keep this small.
+const MAX_REWRITE_PASSES = 3;
+
+const list = (items: string[]) => items.join(", ");
+
+// Fewer issues wins; then the more varied sentence rhythm, then the healthier score.
+const isBetter = (a: AntiAIAuditResult, b: AntiAIAuditResult) =>
+  postIssues(a).length - postIssues(b).length ||
+  b.burstinessScore - a.burstinessScore ||
+  b.healthScore - a.healthScore;
+
 /**
- * Optimizes an existing blog post following strict anti-AI rules.
+ * Cleans up an existing post, then checks it again: the deterministic fixes run first,
+ * and while the result still fails a check, it gets another spoken-voice rewrite (up to
+ * MAX_REWRITE_PASSES). Every pass starts from the same cleaned text, so fillers from one
+ * pass never stack onto the next; the version with the fewest remaining issues wins.
  */
 export async function optimizeBlogPostWithAntiAI(
   rawMarkdown: string,
@@ -223,88 +365,62 @@ export async function optimizeBlogPostWithAntiAI(
   const beforeAudit = auditContentForAntiAI(rawMarkdown);
   const parsed = matter(rawMarkdown);
   const frontmatter = parsed.data;
-  let body = parsed.content;
-
   const changesSummary: string[] = [];
+  const toMarkdown = (body: string) => matter.stringify(body, frontmatter);
 
-  // Pass 1: Strict em-dash eradication
+  // Deterministic fixes: em-dashes, AI-sounding words, internal links.
+  let body = parsed.content;
   if (beforeAudit.emDashCount > 0) {
     body = removeEmDashes(body);
-    changesSummary.push(
-      `Eradicated ${beforeAudit.emDashCount} em-dash (—) occurrences.`,
-    );
+    changesSummary.push(`Removed ${beforeAudit.emDashCount} em-dash${beforeAudit.emDashCount === 1 ? "" : "es"}.`);
   }
-
-  // Pass 2: Rule-based cliché removal
-  const replacements: [RegExp, string][] = [
-    [/\bIn conclusion,?\b/gi, "The takeaway:"],
-    [/\bTo delve into\b/gi, "To examine"],
-    [/\bdelve into\b/gi, "examine"],
-    [/\bdelving into\b/gi, "examining"],
-    [/\ba testament to\b/gi, "clear proof of"],
-    [/\btapestry of\b/gi, "spectrum of"],
-    [
-      /\bIn today's fast-paced digital landscape,?\b/gi,
-      "In modern digital commerce,",
-    ],
-    [/\bIn today's digital landscape,?\b/gi, "In modern web development,"],
-    [/\bMoreover,?\b/gi, "What is more,"],
-    [/\bFurthermore,?\b/gi, "Beyond that,"],
-    [/\bit is important to remember that\b/gi, "keep in mind that"],
-    [/\bit is worth noting that\b/gi, "notably,"],
-    [/\bplays a crucial role in\b/gi, "directly impacts"],
-    [/\bcrucial role\b/gi, "central role"],
-    [/\bvital role\b/gi, "key role"],
-    [/\bgame-changer\b/gi, "major shift"],
-    [/\bnavigating the complex world of\b/gi, "managing"],
-    [/\bdive deep into\b/gi, "analyze"],
-    [/\bIn this blog post,?\b/gi, "Below,"],
-  ];
-
-  let clicheRemovedCount = 0;
-  for (const [regex, rep] of replacements) {
-    if (regex.test(body)) {
-      body = body.replace(regex, rep);
-      clicheRemovedCount++;
-    }
+  const words = fixAiWords(body);
+  if (words.count > 0) {
+    body = words.text;
+    changesSummary.push(`Replaced ${words.count} AI-sounding word${words.count === 1 ? "" : "s"} with plain ones.`);
   }
-  if (clicheRemovedCount > 0) {
-    changesSummary.push(
-      `Replaced ${clicheRemovedCount} robotic AI transition phrases with authentic editorial language.`,
-    );
-  }
-
-  // Pass 3: Internal linking enrichment
+  const countLinks = (text: string) => (text.match(/\]\(/g) || []).length;
   const linkedBody = optimizeInternalLinking(body);
-  if (linkedBody !== body) {
-    body = linkedBody;
-    changesSummary.push("Added contextual internal links.");
+  const added = countLinks(linkedBody) - countLinks(body);
+  if (added > 0) {
+    changesSummary.push(`Added ${added} internal link${added === 1 ? "" : "s"}.`);
+  }
+  body = linkedBody;
+
+  const cleaned = body;
+  let best = { body: cleaned, audit: auditContentForAntiAI(toMarkdown(cleaned)) };
+
+  // Check again; rewrite while something still fails.
+  for (let pass = 1; pass <= MAX_REWRITE_PASSES && postIssues(best.audit).length > 0; pass++) {
+    let next: string;
+    let note: string;
+    try {
+      const { markdown, rewritten, total } = await humanizeArticle(cleaned, apiKey);
+      next = markdown;
+      note = rewritten > 0 ? `rewrote ${rewritten} of ${total} sections` : "couldn't safely rewrite any section";
+    } catch (err) {
+      console.warn("Human-voice rewrite failed, using word-level cleanup:", err);
+      next = applyAdvancedHumanization(cleaned);
+      note = "rewrite unavailable, word-level cleanup only";
+    }
+    // The rewrite can bring AI words or dashes back, so fix those again.
+    next = fixAiWords(removeEmDashes(next)).text;
+
+    const audit = auditContentForAntiAI(toMarkdown(next));
+    const issues = postIssues(audit);
+    changesSummary.push(`Pass ${pass}: ${note}; ${issues.length ? `still ${list(issues)}` : "passes all checks"}.`);
+    if (isBetter(audit, best.audit) < 0) best = { body: next, audit };
+    if (!note.startsWith("rewrote")) break; // another pass wouldn't change anything
   }
 
-  // Pass 4: human-voice rewrite (facts locked) + deterministic cleanup
-  try {
-    const { markdown, rewritten, total } = await humanizeArticle(body, apiKey);
-    body = markdown;
-    changesSummary.push(
-      rewritten > 0
-        ? `Rewrote ${rewritten} of ${total} sections in a more natural voice.`
-        : "Couldn't safely rewrite any section; applied word-level cleanup only.",
-    );
-  } catch (err) {
-    console.warn("Human-voice rewrite failed, using word-level cleanup:", err);
-    body = applyAdvancedHumanization(body);
-    changesSummary.push("Applied word-level cleanup (rewrite unavailable).");
-  }
-
-  // Reassemble markdown with frontmatter
-  const finalMarkdown = matter.stringify(body, frontmatter);
-  const afterAudit = auditContentForAntiAI(finalMarkdown);
+  const remainingIssues = postIssues(best.audit);
 
   return {
     originalMarkdown: rawMarkdown,
-    optimizedMarkdown: finalMarkdown,
+    optimizedMarkdown: toMarkdown(best.body),
     beforeAudit,
-    afterAudit,
+    afterAudit: best.audit,
+    remainingIssues,
     changesSummary,
   };
 }

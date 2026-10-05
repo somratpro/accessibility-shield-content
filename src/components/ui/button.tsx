@@ -4,13 +4,13 @@ import { Loader2 } from "lucide-react";
 import * as React from "react";
 
 const buttonVariants = cva(
-  "inline-flex cursor-pointer items-center justify-center gap-1.5 whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:pointer-events-none disabled:opacity-50",
+  "inline-flex no-underline cursor-pointer items-center justify-center gap-1.5 whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:pointer-events-none disabled:opacity-50",
   {
     variants: {
       variant: {
-        default: "bg-accent text-accent-fg hover:opacity-90",
-        outline: "border border-border bg-surface hover:bg-surface-2",
-        ghost: "text-muted hover:bg-surface-2 hover:text-fg",
+        default: "bg-primary text-primary-foreground hover:opacity-90",
+        outline: "border border-border bg-background hover:bg-light",
+        ghost: "text-muted-foreground hover:bg-light hover:text-foreground",
       },
       size: {
         default: "h-9 px-4",

@@ -2,6 +2,7 @@ import {
   auditContentForAntiAI,
   optimizeBlogPostWithAntiAI,
 } from "@/lib/ai/content-optimizer";
+import { postIssues } from "@/lib/post-issues";
 import {
   getExistingBlogPostBySlug,
   getExistingBlogPosts,
@@ -67,9 +68,7 @@ export async function GET(req: NextRequest) {
         totalCliches,
         avgHealth,
         postsNeedingOptimization: auditedPosts.filter(
-          (p) =>
-            (p.audit?.emDashCount || 0) > 0 ||
-            (p.audit?.aiClicheCount || 0) > 0,
+          (p) => postIssues(p.audit).length > 0,
         ).length,
       },
     });
@@ -96,7 +95,7 @@ export async function POST(req: NextRequest) {
     const post = getExistingBlogPostBySlug(slug);
     if (!post) {
       return NextResponse.json(
-        { error: `Post "${slug}" not found in the output folder.` },
+        { error: `Post "${slug}" not found in the content folder.` },
         { status: 404 },
       );
     }
@@ -115,7 +114,7 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Action: Save optimized version to the output folder
+    // Action: Save optimized version to the content folder
     if (action === "save") {
       const contentToSave = optimizedMarkdown || post.rawMarkdown;
       const saveRes = savePost(post.filename, contentToSave);

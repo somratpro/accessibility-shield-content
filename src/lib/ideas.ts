@@ -52,6 +52,6 @@ export function openIdeasByImpact(ideas: Idea[]): Idea[] {
 
 export const IMPACT_STYLE: Record<ImpactLevel, string> = {
   High: "text-success",
-  Medium: "text-warn",
-  Low: "text-muted",
+  Medium: "text-warning",
+  Low: "text-muted-foreground",
 };

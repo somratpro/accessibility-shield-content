@@ -23,7 +23,7 @@ function Step({
   children?: React.ReactNode;
 }) {
   return (
-    <Card className={cn("p-5", state === "later" && "opacity-60")}>
+    <Card className="p-5">
       <div className="flex items-center gap-3">
         <span
           className={cn(

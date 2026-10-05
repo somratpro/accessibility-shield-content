@@ -58,7 +58,7 @@ HARD RULES:
 - No em-dashes or en-dashes. No preamble, output only the markdown.
 
 HOW REAL PEOPLE WRITE (do all of this):
-- Mix very short sentences (2 to 5 words) with long, loose ones that ramble a bit and use "and" or "but" to keep going.
+- Sentence length must swing a lot. In every paragraph, put at least one long, loose sentence (25 to 40 words, kept going with "and", "but", "so", "because" or commas) next to a very short one (2 to 6 words). Don't chop everything into short sentences, and keep long sentences from the input long. The shape to aim for: "That's the catch. The tool runs fine on your laptop, but once three people on the team start using it with their own settings and nobody writes any of it down, you end up chasing problems that only happen on one machine."
 - Spoken phrasing: "Here's the thing.", "Honestly,", "Look,", "So what does that mean for you?", "That's it.", "Pretty simple, right?". Use these sparingly and vary them.
 - Contractions everywhere. Second person ("you", "your").
 - Prefer everyday words and idioms over formal ones: "a big chunk", "won't save you", "the catch is", "on the hook", "in plain English".

@@ -6,7 +6,7 @@ import {
   removeEmDashes,
   splitContentPreservingTables,
 } from "../utils";
-import { postIssues } from "../post-issues";
+import { MIN_SENTENCE_VARIETY, postIssues } from "../post-issues";
 import { applyAdvancedHumanization } from "./content-humanizer";
 import { humanizeArticle } from "./humanizer";
 import { optimizeInternalLinking } from "./internal-linker";
@@ -383,16 +383,24 @@ export async function optimizeBlogPostWithAntiAI(
   const countLinks = (text: string) => (text.match(/\]\(/g) || []).length;
   const linkedBody = optimizeInternalLinking(body);
   const added = countLinks(linkedBody) - countLinks(body);
-  if (added > 0) {
+  // With no natural spot for a link, the linker appends the context file's call to action.
+  const ctaEnding = /\n---\n\n\*[^\n]*\*\s*$/;
+  const addedCta = ctaEnding.test(linkedBody) && !ctaEnding.test(body);
+  if (addedCta) {
+    changesSummary.push("Added the call to action at the end (no natural spot for an internal link).");
+  } else if (added > 0) {
     changesSummary.push(`Added ${added} internal link${added === 1 ? "" : "s"}.`);
   }
   body = linkedBody;
 
   const cleaned = body;
-  let best = { body: cleaned, audit: auditContentForAntiAI(toMarkdown(cleaned)) };
+  const cleanedAudit = auditContentForAntiAI(toMarkdown(cleaned));
+  let best = { body: cleaned, audit: cleanedAudit };
+  let passes = 0;
 
   // Check again; rewrite while something still fails.
   for (let pass = 1; pass <= MAX_REWRITE_PASSES && postIssues(best.audit).length > 0; pass++) {
+    passes = pass;
     let next: string;
     let note: string;
     try {
@@ -411,11 +419,18 @@ export async function optimizeBlogPostWithAntiAI(
 
     const audit = auditContentForAntiAI(toMarkdown(next));
     const issues = postIssues(audit);
-    changesSummary.push(`Pass ${pass}: ${note}; ${issues.length ? `still ${list(issues)}` : "passes all checks"}.`);
+    const variety = issues.includes("uniform sentence length")
+      ? ` (sentence variety ${audit.burstinessScore}, needs ${MIN_SENTENCE_VARIETY}; before the rewrite ${cleanedAudit.burstinessScore})`
+      : "";
+    changesSummary.push(`Pass ${pass}: ${note}; ${issues.length ? `still ${list(issues)}${variety}` : "passes all checks"}.`);
     if (isBetter(audit, best.audit) < 0) best = { body: next, audit };
     if (issues.length && pass < MAX_REWRITE_PASSES && note.startsWith("rewrote"))
       onProgress?.(`Pass ${pass} still has ${list(issues)}. Rewriting again`);
     if (!note.startsWith("rewrote")) break; // another pass wouldn't change anything
+  }
+
+  if (passes > 0 && best.body === cleaned) {
+    changesSummary.push("No rewrite scored better than the current wording, so the post text is unchanged apart from the fixes above.");
   }
 
   const remainingIssues = postIssues(best.audit);

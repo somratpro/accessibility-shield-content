@@ -4,6 +4,7 @@ import {
   AntiAIAuditResult,
   OptimizationResult,
 } from "@/lib/ai/content-optimizer";
+import { readEventStream } from "@/lib/event-stream";
 import { postIssues } from "@/lib/post-issues";
 import type { SearchPerformance } from "@/lib/search-console";
 import { cn } from "@/lib/utils";
@@ -29,6 +30,7 @@ export function ExistingContentOptimizer() {
   const [loading, setLoading] = useState(true);
   const [activeSlug, setActiveSlug] = useState<string | null>(null);
   const [optimizingSlug, setOptimizingSlug] = useState<string | null>(null);
+  const [progress, setProgress] = useState<{ step: string; startedAt: number } | null>(null);
   const [result, setResult] = useState<OptimizationResult | null>(null);
   const [view, setView] = useState<"preview" | "original" | "optimized">(
     "preview",
@@ -71,20 +73,33 @@ export function ExistingContentOptimizer() {
     setOptimizingSlug(slug);
     setActiveSlug(slug);
     setResult(null);
+    setProgress({ step: "Starting", startedAt: Date.now() });
     try {
       const res = await fetch("/api/existing-content", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "optimize", slug, apiKey }),
       });
-      const data = await res.json();
-      if (!data.success) throw new Error(data.error || "Cleanup failed");
-      setResult(data.optimization);
-      setView("preview");
+      if (!res.ok || !res.body) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `Server responded with ${res.status}`);
+      }
+      let finished = false;
+      await readEventStream(res.body, (type, data) => {
+        if (type === "step") setProgress((p) => p && { ...p, step: data.step });
+        if (type === "error") throw new Error(data.message);
+        if (type === "result") {
+          finished = true;
+          setResult(data.optimization);
+          setView("preview");
+        }
+      });
+      if (!finished) throw new Error("Cleanup stopped before it finished");
     } catch (err: any) {
       toast.error(err?.message || "Cleanup failed");
     } finally {
       setOptimizingSlug(null);
+      setProgress(null);
     }
   };
 
@@ -228,6 +243,11 @@ export function ExistingContentOptimizer() {
                       <span className="text-warning"> · {issues.join(", ")}</span>
                     )}
                   </p>
+                  {optimizingSlug === post.slug && progress && (
+                    <p className="mt-1 truncate text-xs text-muted-foreground">
+                      <span aria-live="polite">{progress.step}</span> · <Elapsed since={progress.startedAt} />
+                    </p>
+                  )}
                 </div>
                 {search?.configured && !search.error && (
                   <PerformanceCell data={search.pages[post.slug]} />
@@ -253,6 +273,17 @@ export function ExistingContentOptimizer() {
 }
 
 const issuesOf = (post: AuditedPost) => postIssues(post.audit);
+
+function Elapsed({ since }: { since: number }) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+  const seconds = Math.max(0, Math.floor((now - since) / 1000));
+  const m = Math.floor(seconds / 60);
+  return <>{m > 0 ? `${m}m ${seconds % 60}s` : `${seconds}s`}</>;
+}
 
 function PerformanceCell({
   data,

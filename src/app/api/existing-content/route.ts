@@ -10,7 +10,7 @@ import {
 } from "@/lib/posts-store";
 import { NextRequest, NextResponse } from "next/server";
 
-export const maxDuration = 300;
+export const maxDuration = 800;
 
 export async function GET(req: NextRequest) {
   try {
@@ -100,17 +100,40 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Action: Optimize with Anti-AI rules
+    // Action: Optimize with Anti-AI rules. Long posts take minutes on Groq's free tier, so
+    // progress is streamed as server-sent events ("step", then "result" or "error").
     if (action === "optimize") {
-      const optimization = await optimizeBlogPostWithAntiAI(
-        post.rawMarkdown,
-        apiKey,
-      );
-      return NextResponse.json({
-        success: true,
-        slug,
-        filename: post.filename,
-        optimization,
+      const encoder = new TextEncoder();
+      const stream = new TransformStream();
+      const writer = stream.writable.getWriter();
+      const sendEvent = (type: "step" | "result" | "error", data: any) =>
+        writer
+          .write(encoder.encode(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`))
+          .catch(() => {}); // the browser went away; finish quietly
+
+      (async () => {
+        try {
+          sendEvent("step", { step: "Fixing dashes, AI words and links" });
+          const optimization = await optimizeBlogPostWithAntiAI(
+            post.rawMarkdown,
+            apiKey,
+            (step) => sendEvent("step", { step }),
+          );
+          await sendEvent("result", { slug, filename: post.filename, optimization });
+        } catch (err: any) {
+          console.error("Existing content cleanup error:", err);
+          await sendEvent("error", { message: err?.message || "Cleanup failed" });
+        } finally {
+          await writer.close().catch(() => {});
+        }
+      })();
+
+      return new Response(stream.readable, {
+        headers: {
+          "Content-Type": "text/event-stream; charset=utf-8",
+          "Cache-Control": "no-cache, no-transform",
+          Connection: "keep-alive",
+        },
       });
     }
 

@@ -361,6 +361,7 @@ const isBetter = (a: AntiAIAuditResult, b: AntiAIAuditResult) =>
 export async function optimizeBlogPostWithAntiAI(
   rawMarkdown: string,
   apiKey?: string,
+  onProgress?: (message: string) => void,
 ): Promise<OptimizationResult> {
   const beforeAudit = auditContentForAntiAI(rawMarkdown);
   const parsed = matter(rawMarkdown);
@@ -395,7 +396,9 @@ export async function optimizeBlogPostWithAntiAI(
     let next: string;
     let note: string;
     try {
-      const { markdown, rewritten, total } = await humanizeArticle(cleaned, apiKey);
+      const { markdown, rewritten, total } = await humanizeArticle(cleaned, apiKey, (message) =>
+        onProgress?.(`Pass ${pass} of up to ${MAX_REWRITE_PASSES}. ${message}`),
+      );
       next = markdown;
       note = rewritten > 0 ? `rewrote ${rewritten} of ${total} sections` : "couldn't safely rewrite any section";
     } catch (err) {
@@ -410,6 +413,8 @@ export async function optimizeBlogPostWithAntiAI(
     const issues = postIssues(audit);
     changesSummary.push(`Pass ${pass}: ${note}; ${issues.length ? `still ${list(issues)}` : "passes all checks"}.`);
     if (isBetter(audit, best.audit) < 0) best = { body: next, audit };
+    if (issues.length && pass < MAX_REWRITE_PASSES && note.startsWith("rewrote"))
+      onProgress?.(`Pass ${pass} still has ${list(issues)}. Rewriting again`);
     if (!note.startsWith("rewrote")) break; // another pass wouldn't change anything
   }
 

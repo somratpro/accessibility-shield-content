@@ -1,5 +1,6 @@
 "use client";
 
+import { readEventStream } from "@/lib/event-stream";
 import type { Idea } from "@/lib/ideas";
 import { ContentResult, IdeaGenerationContext } from "@/types/content";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -16,28 +17,6 @@ interface GenerateParams {
   customInstruction?: string;
   autoPublish?: boolean;
   idea?: IdeaGenerationContext;
-}
-
-/** Reads the /api/generate server-sent event stream. */
-async function readEventStream(
-  body: ReadableStream<Uint8Array>,
-  onEvent: (type: string, data: any) => Promise<void> | void,
-) {
-  const reader = body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const parts = buffer.split("\n\n");
-    buffer = parts.pop() || "";
-    for (const part of parts) {
-      const type = part.match(/^event:\s*(.+)$/m)?.[1]?.trim() || "message";
-      const data = part.match(/^data:\s*(.+)$/m)?.[1];
-      if (data) await onEvent(type, JSON.parse(data));
-    }
-  }
 }
 
 function ideaInstruction(idea: Idea) {

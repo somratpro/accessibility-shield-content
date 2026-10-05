@@ -134,6 +134,13 @@ export interface RewriteOptions {
   model?: string;
   temperature?: number;
   system?: string;
+  /** Called with a short status line as parts finish or wait on Groq's rate limit. */
+  onProgress?: (message: string) => void;
+}
+
+interface Reporter {
+  partDone(): void;
+  waiting(seconds: number): void;
 }
 
 // Rewrite models (REWRITE_MODELS) in order of preference. A different family from the
@@ -155,6 +162,7 @@ async function callRewriteModel(
   temperature: number,
   maxTokens: number,
   apiKey?: string,
+  reporter?: Reporter,
 ): Promise<{ text: string; finishReason: string }> {
   const isQwen = model.startsWith("qwen/");
   const run = () =>
@@ -188,6 +196,7 @@ async function callRewriteModel(
       const wait = message.match(/try again in ([\d.]+)(m?s)/i);
       if (!wait || attempt >= 6) throw err;
       const ms = parseFloat(wait[1]) * (wait[2] === "ms" ? 1 : 1000) + 500;
+      reporter?.waiting(Math.round(ms / 1000));
       await new Promise((r) => setTimeout(r, ms));
     }
   }
@@ -231,6 +240,7 @@ async function rewriteChunk(
   temperature: number,
   models: string[],
   apiKey?: string,
+  reporter?: Reporter,
 ): Promise<string> {
   // Nothing but code/tables: nothing to rewrite.
   if (wordCount(chunk.replace(/\[\[BLOCK_\d+\]\]/g, "")) < 25) return chunk;
@@ -249,6 +259,7 @@ async function rewriteChunk(
         temperature,
         maxTokens,
         apiKey,
+        reporter,
       );
       const output = cleanModelOutput(text);
       if (
@@ -271,6 +282,7 @@ async function rewriteSection(
   section: string,
   apiKey?: string,
   options: RewriteOptions = {},
+  reporter?: Reporter,
 ): Promise<string> {
   const { text: protectedText, blocks } = protectBlocks(section);
   const system =
@@ -281,8 +293,12 @@ async function rewriteSection(
   const chunks = splitIntoChunks(protectedText);
   const outputs: string[] = [];
   // One chunk at a time: the rate limits are per minute anyway.
-  for (const chunk of chunks)
-    outputs.push(await rewriteChunk(chunk, system, temperature, models, apiKey));
+  for (const chunk of chunks) {
+    outputs.push(
+      await rewriteChunk(chunk, system, temperature, models, apiKey, reporter),
+    );
+    reporter?.partDone();
+  }
 
   if (outputs.every((out, i) => out === chunks[i])) return section;
   return restoreBlocks(outputs.join("\n\n"), blocks);
@@ -298,11 +314,28 @@ export async function rewriteInHumanVoice(
   const results: string[] = new Array(sections.length);
   let rewritten = 0;
 
+  const parts = sections.reduce(
+    (n, s) => n + splitIntoChunks(protectBlocks(s).text).length,
+    0,
+  );
+  let done = 0;
+  const reporter: Reporter | undefined = options.onProgress && {
+    partDone: () =>
+      options.onProgress!(`Rewriting: ${++done} of ${parts} parts done`),
+    waiting: (seconds) =>
+      options.onProgress!(
+        `Waiting ${seconds}s for Groq's rate limit (${done} of ${parts} parts done)`,
+      ),
+  };
+  options.onProgress?.(`Rewriting: 0 of ${parts} parts done`);
+
   // Two at a time keeps us under Groq's free-tier rate limits.
   for (let i = 0; i < sections.length; i += 2) {
     const batch = sections.slice(i, i + 2);
     const outputs = await Promise.all(
-      batch.map((s) => rewriteSection(s, apiKey, options).catch(() => s)),
+      batch.map((s) =>
+        rewriteSection(s, apiKey, options, reporter).catch(() => s),
+      ),
     );
     outputs.forEach((out, j) => {
       results[i + j] = out;
@@ -324,8 +357,9 @@ export async function rewriteInHumanVoice(
 export async function humanizeArticle(
   markdown: string,
   apiKey?: string,
+  onProgress?: (message: string) => void,
 ): Promise<{ markdown: string; rewritten: number; total: number }> {
-  const result = await rewriteInHumanVoice(markdown, apiKey);
+  const result = await rewriteInHumanVoice(markdown, apiKey, { onProgress });
   const passed = applyImperfectionPasses(result.markdown, "standard");
   return { ...result, markdown: applyAdvancedHumanization(passed) };
 }

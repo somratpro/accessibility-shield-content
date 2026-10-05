@@ -54,7 +54,7 @@ export function buildRewriteSystem(brand: BrandContext): string {
 HARD RULES:
 - Keep every fact, number, technical term, standard or rule reference, product name, link (same URL) and instruction. Change the wording, not the meaning.
 - Never add facts, stats, examples, stories, quotes or claims that aren't in the input. Opinions about how to approach things are fine ("we'd start here").
-- Keep headings (lightly reworded is fine), list items in the same order, and every placeholder like [[BLOCK_2]] exactly, on its own line, in the same spot.
+- Keep headings (lightly reworded is fine), list items in the same order, and every placeholder like [[BLOCK_2]] exactly, on its own line, in the same spot. Never add a placeholder the input doesn't have.
 - No em-dashes or en-dashes. No preamble, output only the markdown.
 
 HOW REAL PEOPLE WRITE (do all of this):
@@ -110,7 +110,9 @@ function isFaithful(
   placeholders: string[],
 ): boolean {
   if (!rewritten.trim()) return false;
-  if (placeholders.some((p) => !rewritten.includes(p))) return false;
+  // Exactly the same placeholders: a missing one drops a block, an invented one duplicates it.
+  const found = (rewritten.match(/\[\[BLOCK_\d+\]\]/g) ?? []).sort().join();
+  if (found !== [...placeholders].sort().join()) return false;
   const ratio = wordCount(rewritten) / Math.max(1, wordCount(original));
   // Turning terse bullets into sentences legitimately adds words; huge growth suggests invented content.
   if (ratio < 0.75 || ratio > 1.8) return false;
@@ -137,6 +139,15 @@ export interface RewriteOptions {
 // Rewrite models (REWRITE_MODELS) in order of preference. A different family from the
 // drafting model (gpt-oss) gives the final text a different statistical fingerprint.
 
+// Groq rejects outright, with no retry time, any request whose expected output is over the
+// model's per-minute output limit (Qwen on the free tier: "OTPM: Limit 1000, Requested 1067"),
+// whatever the prompt size. Remember that limit per model and keep max_tokens within it.
+const outputLimits = new Map<string, number>();
+
+// Long sections go to the model in chunks of about this many words (code and tables not
+// counted), split at H3 headings or paragraphs, so each rewrite fits in 1,000 output tokens.
+const CHUNK_WORDS = 350;
+
 async function callRewriteModel(
   model: string,
   system: string,
@@ -154,7 +165,7 @@ async function callRewriteModel(
       prompt: isQwen ? `${prompt}\n\n/no_think` : prompt,
       temperature,
       topP: 0.95,
-      maxTokens,
+      maxTokens: Math.min(maxTokens, outputLimits.get(model) ?? maxTokens),
       providerOptions: isQwen
         ? { groq: { reasoningFormat: "hidden" } }
         : undefined,
@@ -168,9 +179,13 @@ async function callRewriteModel(
       result = await run();
       break;
     } catch (err: any) {
-      const wait = String(err?.message || "").match(
-        /try again in ([\d.]+)(m?s)/i,
-      );
+      const message = String(err?.message || "");
+      const limit = message.match(/Request too large[\s\S]*?\(OTPM\): Limit (\d+)/i);
+      if (limit && !outputLimits.has(model)) {
+        outputLimits.set(model, Number(limit[1]));
+        continue;
+      }
+      const wait = message.match(/try again in ([\d.]+)(m?s)/i);
       if (!wait || attempt >= 6) throw err;
       const ms = parseFloat(wait[1]) * (wait[2] === "ms" ? 1 : 1000) + 500;
       await new Promise((r) => setTimeout(r, ms));
@@ -184,25 +199,46 @@ async function callRewriteModel(
   };
 }
 
-async function rewriteSection(
-  section: string,
+function splitIntoChunks(text: string): string[] {
+  if (wordCount(text) <= CHUNK_WORDS) return [text];
+  const units: string[] = [];
+  for (const part of text.split(/\n+(?=### )/)) {
+    if (wordCount(part) <= CHUNK_WORDS) {
+      units.push(part);
+      continue;
+    }
+    for (const para of part.split(/\n{2,}/).filter((p) => p.trim())) {
+      const prev = units[units.length - 1];
+      // Keep a heading with the paragraph under it.
+      if (prev !== undefined && /^#{1,6} [^\n]*$/.test(prev))
+        units[units.length - 1] = `${prev}\n\n${para}`;
+      else units.push(para);
+    }
+  }
+  const chunks: string[] = [];
+  for (const unit of units) {
+    const last = chunks[chunks.length - 1];
+    if (last !== undefined && wordCount(last) + wordCount(unit) <= CHUNK_WORDS)
+      chunks[chunks.length - 1] = `${last}\n\n${unit}`;
+    else chunks.push(unit);
+  }
+  return chunks;
+}
+
+async function rewriteChunk(
+  chunk: string,
+  system: string,
+  temperature: number,
+  models: string[],
   apiKey?: string,
-  options: RewriteOptions = {},
 ): Promise<string> {
-  const { text: protectedText, blocks } = protectBlocks(section);
-  const placeholders = blocks.map((_, i) => `[[BLOCK_${i}]]`);
-
   // Nothing but code/tables: nothing to rewrite.
-  if (wordCount(protectedText.replace(/\[\[BLOCK_\d+\]\]/g, "")) < 25)
-    return section;
+  if (wordCount(chunk.replace(/\[\[BLOCK_\d+\]\]/g, "")) < 25) return chunk;
 
-  const system =
-    options.system ?? buildRewriteSystem(requireStudioConfig().brand);
-  const prompt = `Rewrite this section:\n\n${protectedText}`;
-  const temperature = options.temperature ?? 1.0;
+  const placeholders = chunk.match(/\[\[BLOCK_\d+\]\]/g) ?? [];
+  const prompt = `Rewrite this section:\n\n${chunk}`;
   // Reasoning models spend tokens before answering; leave room.
-  const maxTokens = Math.max(4000, Math.ceil(wordCount(protectedText) * 4));
-  const models = options.model ? [options.model] : getModelConfig().rewrite;
+  const maxTokens = Math.max(4000, Math.ceil(wordCount(chunk) * 4));
 
   for (const model of models) {
     try {
@@ -217,15 +253,39 @@ async function rewriteSection(
       const output = cleanModelOutput(text);
       if (
         finishReason !== "length" &&
-        isFaithful(protectedText, output, placeholders)
+        isFaithful(chunk, output, placeholders)
       ) {
-        return restoreBlocks(output, blocks);
+        return output;
       }
+      console.warn(
+        `[humanizer] ${model} output rejected (${finishReason === "length" ? "cut off" : "lost a placeholder or link, or changed length too much"})`,
+      );
     } catch (err) {
       console.warn(`[humanizer] ${model} failed:`, (err as Error)?.message);
     }
   }
-  return section;
+  return chunk;
+}
+
+async function rewriteSection(
+  section: string,
+  apiKey?: string,
+  options: RewriteOptions = {},
+): Promise<string> {
+  const { text: protectedText, blocks } = protectBlocks(section);
+  const system =
+    options.system ?? buildRewriteSystem(requireStudioConfig().brand);
+  const temperature = options.temperature ?? 1.0;
+  const models = options.model ? [options.model] : getModelConfig().rewrite;
+
+  const chunks = splitIntoChunks(protectedText);
+  const outputs: string[] = [];
+  // One chunk at a time: the rate limits are per minute anyway.
+  for (const chunk of chunks)
+    outputs.push(await rewriteChunk(chunk, system, temperature, models, apiKey));
+
+  if (outputs.every((out, i) => out === chunks[i])) return section;
+  return restoreBlocks(outputs.join("\n\n"), blocks);
 }
 
 /** Rewrites each H2 section (and the intro) in a human voice. Returns the original on failure. */
